@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FullPage Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <div class="logo-wrap">
+      <img src="../icons/icon48.png" alt="Logo" class="logo-img">
+      <div>
+        <div class="title">FullPage Capture</div>
+        <div class="subtitle">Chụp cuộn & Cắt ảnh</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="content">
+    <button id="btn-fullpage" class="btn btn-primary">
+      <span class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <line x1="12" y1="8" x2="12" y2="16"/>
+          <line x1="8" y1="12" x2="16" y2="12"/>
+        </svg>
+      </span>
+      <div class="btn-text">
+        <div class="btn-title">Chụp toàn bộ trang web</div>
+        <div class="btn-desc">Tự động cuộn từ đầu đến cuối</div>
+      </div>
+    </button>
+
+    <button id="btn-visible" class="btn btn-secondary">
+      <span class="icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+      </span>
+      <div class="btn-text">
+        <div class="btn-title">Chụp vùng đang xem</div>
+        <div class="btn-desc">Chụp tức thì màn hình hiện tại</div>
+      </div>
+    </button>
+  </div>
+
+  <div class="footer">
+    <span>Phiên bản 1.0.0 • Hoàn toàn miễn phí</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
