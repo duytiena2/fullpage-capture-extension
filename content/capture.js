@@ -1,7 +1,7 @@
 (function() {
   // Prevent double injection
-  if (window.__fullPageCaptureRunning) return;
-  window.__fullPageCaptureRunning = true;
+  if (window.__fullPageCaptureInstalled) return;
+  window.__fullPageCaptureInstalled = true;
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -66,8 +66,42 @@
   }
 
   async function executeCapture(isFullPage = true) {
+    if (window.__fullPageCaptureRunning) return;
+    window.__fullPageCaptureRunning = true;
     const originalScrollX = window.scrollX;
     const originalScrollY = window.scrollY;
+    const changedStyles = new Map();
+
+    function setTemporaryStyle(element, property, value) {
+      let saved = changedStyles.get(element);
+      if (!saved) changedStyles.set(element, saved = new Map());
+      if (!saved.has(property)) {
+        saved.set(property, {
+          value: element.style.getPropertyValue(property),
+          priority: element.style.getPropertyPriority(property)
+        });
+      }
+      element.style.setProperty(property, value, 'important');
+    }
+
+    function preparePositionedElements(hideFixed) {
+      for (const element of document.querySelectorAll('*')) {
+        if (element === overlay || overlay.contains(element)) continue;
+        const position = getComputedStyle(element).position;
+        if (position === 'sticky') {
+          // Keep its place and containing block, without following the viewport.
+          setTemporaryStyle(element, 'position', 'relative');
+          for (const edge of ['top', 'right', 'bottom', 'left']) {
+            setTemporaryStyle(element, edge, 'auto');
+          }
+        } else if (hideFixed && position === 'fixed') {
+          // Fixed UI appears in the first frame only. Opacity also hides children
+          // that explicitly override visibility, without changing page layout.
+          setTemporaryStyle(element, 'transition', 'none');
+          setTemporaryStyle(element, 'opacity', '0');
+        }
+      }
+    }
 
     // Hide scrollbars temporarily for clean screenshots
     const style = document.createElement('style');
@@ -75,12 +109,27 @@
     style.textContent = `
       *::-webkit-scrollbar { display: none !important; width: 0 !important; height: 0 !important; }
       html, body { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+      html, body { scroll-behavior: auto !important; scroll-snap-type: none !important; }
     `;
     document.documentElement.appendChild(style);
 
     const overlay = createProgressOverlay();
 
+    async function captureFrame() {
+      // Hide only the indicator; visibility avoids a layout shift.
+      overlay.style.setProperty('visibility', 'hidden', 'important');
+      try {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const res = await chrome.runtime.sendMessage({ action: 'CAPTURE_VISIBLE' });
+        if (!res?.success) throw new Error(res?.error || 'Không thể chụp ảnh tab');
+        return res;
+      } finally {
+        overlay.style.removeProperty('visibility');
+      }
+    }
+
     try {
+      if (isFullPage) preparePositionedElements(false);
       const dpr = window.devicePixelRatio || 1;
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
@@ -104,9 +153,7 @@
         // Just capture visible screen
         updateProgress(50, 'Đang chụp vùng nhìn thấy...');
         await sleep(150);
-        const res = await new Promise(resolve => {
-          chrome.runtime.sendMessage({ action: 'CAPTURE_VISIBLE' }, resolve);
-        });
+        const res = await captureFrame();
         if (!res || !res.success) throw new Error(res?.error || 'Lỗi chụp màn hình');
         chunks.push({
           y: 0,
@@ -126,14 +173,14 @@
           step++;
           window.scrollTo(0, currentY);
           // Wait for render / lazy loaded images
-          await sleep(250);
+          await sleep(600);
+          // Rescan for sticky/fixed UI inserted or activated while scrolling.
+          preparePositionedElements(chunks.length > 0);
 
           const percent = Math.min(95, Math.round((step / totalSteps) * 100));
           updateProgress(percent, `Đang cuộn trang (${step}/${totalSteps})...`);
 
-          const res = await new Promise(resolve => {
-            chrome.runtime.sendMessage({ action: 'CAPTURE_VISIBLE' }, resolve);
-          });
+          const res = await captureFrame();
           if (!res || !res.success) throw new Error(res?.error || 'Không thể chụp ảnh tab');
 
           // Calculate overlap for stitching if at bottom
@@ -182,15 +229,33 @@
         chunks
       };
 
-      chrome.runtime.sendMessage({
+      const saved = await chrome.runtime.sendMessage({
         action: 'SAVE_AND_OPEN_EDITOR',
         payload
       });
+      if (!saved?.success) throw new Error(saved?.error || 'Không thể lưu ảnh chụp');
 
     } catch (err) {
       console.error('FullPage Capture Error:', err);
       alert('Lỗi chụp màn hình: ' + err.message);
     } finally {
+      for (const [element, properties] of changedStyles) {
+        for (const [property, saved] of properties) {
+          if (property === 'transition') continue;
+          if (saved.value) element.style.setProperty(property, saved.value, saved.priority);
+          else element.style.removeProperty(property);
+        }
+      }
+      // Restore opacity while transitions are still disabled, so the header
+      // returns immediately instead of fading back in after capture.
+      for (const [element, properties] of changedStyles) {
+        const saved = properties.get('transition');
+        if (!saved) continue;
+        getComputedStyle(element).opacity;
+        if (saved.value) element.style.setProperty('transition', saved.value, saved.priority);
+        else element.style.removeProperty('transition');
+      }
+      window.scrollTo(originalScrollX, originalScrollY);
       removeOverlay();
     }
   }

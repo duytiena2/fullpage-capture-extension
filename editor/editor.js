@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const mainCanvas = document.getElementById('main-canvas');
   const ctx = mainCanvas.getContext('2d');
   const canvasContainer = document.getElementById('canvas-container');
+  const workspace = document.getElementById('workspace');
   const loadingSpinner = document.getElementById('loading-spinner');
   const toastEl = document.getElementById('toast');
 
@@ -92,9 +93,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   mainCanvas.height = totalCanvasHeight;
 
   // Stitch chunks
+  let stitchedBottom = 0;
   loadedChunks.forEach(chunk => {
     const destY = Math.round(chunk.y * scale);
-    ctx.drawImage(chunk.img, 0, destY);
+    // The last viewport may overlap the previous one. Keep already captured
+    // pixels (including the first header), and append only the new rows.
+    const sourceY = Math.max(0, stitchedBottom - destY);
+    const height = Math.min(chunk.img.height - sourceY, mainCanvas.height - destY - sourceY);
+    if (height > 0) {
+      ctx.drawImage(chunk.img, 0, sourceY, chunk.img.width, height,
+        0, destY + sourceY, chunk.img.width, height);
+      stitchedBottom = destY + sourceY + height;
+    }
   });
 
   // Save original backup for reset
@@ -114,12 +124,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function setZoom(zoom) {
+    const previousWidth = parseFloat(mainCanvas.style.width);
+    const previousHeight = parseFloat(mainCanvas.style.height);
     currentZoom = Math.max(0.1, Math.min(3.0, zoom));
     zoomLevelText.innerText = `${Math.round(currentZoom * 100)}%`;
     mainCanvas.style.width = `${Math.round(mainCanvas.width * currentZoom)}px`;
     mainCanvas.style.height = `${Math.round(mainCanvas.height * currentZoom)}px`;
     if (cropOverlay.style.display === 'block') {
+      const ratioX = parseFloat(mainCanvas.style.width) / previousWidth;
+      const ratioY = parseFloat(mainCanvas.style.height) / previousHeight;
+      cropState.x *= ratioX;
+      cropState.y *= ratioY;
+      cropState.w *= ratioX;
+      cropState.h *= ratioY;
+      cropState.isDragging = false;
+      cropState.isResizing = false;
       updateCropOverlayBounds();
+      updateCropBoxDOM();
     }
   }
 
@@ -171,10 +192,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     cropBox.style.width = `${cropState.w}px`;
     cropBox.style.height = `${cropState.h}px`;
 
-    const scaleToReal = 1 / currentZoom;
-    const realW = Math.round(cropState.w * scaleToReal);
-    const realH = Math.round(cropState.h * scaleToReal);
+    const { realW, realH } = getCropRectangle();
     cropSizeText.innerText = `Vùng chọn: ${realW} × ${realH} px`;
+  }
+
+  function getCropRectangle() {
+    const scaleX = mainCanvas.width / parseFloat(mainCanvas.style.width);
+    const scaleY = mainCanvas.height / parseFloat(mainCanvas.style.height);
+    const realX = Math.max(0, Math.round(cropState.x * scaleX));
+    const realY = Math.max(0, Math.round(cropState.y * scaleY));
+    const right = Math.min(mainCanvas.width, Math.round((cropState.x + cropState.w) * scaleX));
+    const bottom = Math.min(mainCanvas.height, Math.round((cropState.y + cropState.h) * scaleY));
+    return { realX, realY, realW: right - realX, realH: bottom - realY };
   }
 
   btnCropMode.addEventListener('click', () => {
@@ -192,18 +221,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     cropOverlay.style.display = 'block';
     cropActionsBar.style.display = 'flex';
 
-    // Initial box centered at 70% width and 400px height
-    const dispW = mainCanvas.offsetWidth;
-    const dispH = mainCanvas.offsetHeight;
-    cropState.w = Math.round(dispW * 0.8);
-    cropState.h = Math.min(dispH * 0.8, 500);
-    cropState.x = Math.round((dispW - cropState.w) / 2);
-    cropState.y = Math.min(50, Math.round((dispH - cropState.h) / 2));
+    // Start at the image edges, including content below the visible viewport.
+    cropState.x = 0;
+    cropState.y = 0;
+    cropState.w = parseFloat(mainCanvas.style.width);
+    cropState.h = parseFloat(mainCanvas.style.height);
     updateCropBoxDOM();
   }
 
   function cancelCrop() {
     isCroppingActive = false;
+    cropState.isDragging = false;
+    cropState.isResizing = false;
     btnCropMode.classList.remove('active');
     cropOverlay.style.display = 'none';
     cropActionsBar.style.display = 'none';
@@ -211,20 +240,42 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   btnCancelCrop.addEventListener('click', cancelCrop);
 
+  function getResizeDirection(e) {
+    if (e.target.classList.contains('crop-handle')) return e.target.dataset.dir;
+    const bounds = cropBox.getBoundingClientRect();
+    const x = e.clientX - bounds.left;
+    const y = e.clientY - bounds.top;
+    const edgeWidth = 8;
+    const horizontal = x <= Math.min(edgeWidth, bounds.width / 2) ? 'w'
+      : x >= bounds.width - edgeWidth ? 'e' : '';
+    const vertical = y <= Math.min(edgeWidth, bounds.height / 2) ? 'n'
+      : y >= bounds.height - edgeWidth ? 's' : '';
+    return vertical + horizontal;
+  }
+
+  cropBox.addEventListener('mousemove', (e) => {
+    if (cropState.isDragging || cropState.isResizing) return;
+    const dir = getResizeDirection(e);
+    cropBox.style.cursor = dir === 'e' || dir === 'w' ? 'ew-resize'
+      : dir === 'n' || dir === 's' ? 'ns-resize'
+      : dir === 'ne' || dir === 'sw' ? 'nesw-resize'
+      : dir ? 'nwse-resize' : 'move';
+  });
+
   // Crop box dragging and resizing handlers
   cropBox.addEventListener('mousedown', (e) => {
-    if (e.target.classList.contains('crop-handle')) {
-      cropState.isResizing = true;
-      cropState.resizeDir = e.target.dataset.dir;
-    } else {
-      cropState.isDragging = true;
-    }
+    if (e.button !== 0) return;
+    const dir = getResizeDirection(e);
+    cropState.isResizing = Boolean(dir);
+    cropState.isDragging = !dir;
+    cropState.resizeDir = dir;
     cropState.startX = e.clientX;
     cropState.startY = e.clientY;
     cropState.origX = cropState.x;
     cropState.origY = cropState.y;
     cropState.origW = cropState.w;
     cropState.origH = cropState.h;
+    e.preventDefault();
     e.stopPropagation();
   });
 
@@ -249,14 +300,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (dir.includes('e')) newW = Math.max(40, Math.min(maxW - newX, cropState.origW + dx));
       if (dir.includes('s')) newH = Math.max(40, Math.min(maxH - newY, cropState.origH + dy));
       if (dir.includes('w')) {
-        const possibleW = Math.max(40, cropState.origW - dx);
-        newX = cropState.origX + (cropState.origW - possibleW);
-        newW = possibleW;
+        const right = cropState.origX + cropState.origW;
+        newX = Math.max(0, Math.min(right - Math.min(40, cropState.origW), cropState.origX + dx));
+        newW = right - newX;
       }
       if (dir.includes('n')) {
-        const possibleH = Math.max(40, cropState.origH - dy);
-        newY = cropState.origY + (cropState.origH - possibleH);
-        newH = possibleH;
+        const bottom = cropState.origY + cropState.origH;
+        newY = Math.max(0, Math.min(bottom - Math.min(40, cropState.origH), cropState.origY + dy));
+        newH = bottom - newY;
       }
 
       cropState.x = Math.max(0, newX);
@@ -274,11 +325,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Apply Crop
   btnApplyCrop.addEventListener('click', () => {
-    const scaleToReal = 1 / currentZoom;
-    const realX = Math.round(cropState.x * scaleToReal);
-    const realY = Math.round(cropState.y * scaleToReal);
-    const realW = Math.round(cropState.w * scaleToReal);
-    const realH = Math.round(cropState.h * scaleToReal);
+    const { realX, realY, realW, realH } = getCropRectangle();
 
     if (realW <= 0 || realH <= 0) return;
 

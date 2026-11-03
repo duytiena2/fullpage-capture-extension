@@ -17,13 +17,15 @@ body {
 
 /* Navbar */
 .navbar {
-  height: 60px;
+  min-height: 60px;
+  flex-wrap: wrap;
+  gap: 10px;
   background: #111827;
   border-bottom: 1px solid #1f2937;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 10px 20px;
   z-index: 50;
   flex-shrink: 0;
 }
@@ -32,6 +34,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .logo-badge {
@@ -243,11 +246,10 @@ body {
 /* Main Workspace */
 .workspace {
   flex: 1;
+  min-height: 0;
   position: relative;
   overflow: auto;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  display: block;
   padding: 30px;
   background: #0b0f17;
 }
@@ -276,7 +278,9 @@ body {
 
 .canvas-container {
   position: relative;
-  display: inline-block;
+  display: block;
+  width: max-content;
+  margin: 0 auto;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
   background: #ffffff;
   border-radius: 4px;
@@ -286,7 +290,6 @@ body {
   display: block;
   max-width: none;
   transform-origin: top center;
-  transition: width 0.1s ease, height 0.1s ease;
 }
 
 /* Interactive Crop Overlay */
@@ -297,7 +300,7 @@ body {
   width: 100%;
   height: 100%;
   cursor: crosshair;
-  background: rgba(0, 0, 0, 0.55);
+  background: transparent;
   overflow: hidden;
 }
 
