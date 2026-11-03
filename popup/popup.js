@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnFullPage = document.getElementById('btn-fullpage');
   const btnVisible = document.getElementById('btn-visible');
 
-  async function triggerCapture(isFullPage) {
+  async function triggerCapture(isFullPage, selectContainer = false) {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || !tab.id) {
@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Restricted chrome internal URLs check
       if (
-        tab.url.startsWith('chrome://') ||
+        !tab.url || tab.url.startsWith('chrome://') ||
         tab.url.startsWith('chrome-extension://') ||
         tab.url.startsWith('edge://') ||
         tab.url.startsWith('about:') ||
@@ -31,7 +31,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // Send trigger message
       await chrome.tabs.sendMessage(tab.id, {
         action: 'RUN_CAPTURE',
-        isFullPage
+        isFullPage,
+        selectContainer
       });
 
       // Close popup so it doesn't stay on screen
@@ -44,4 +45,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnFullPage.addEventListener('click', () => triggerCapture(true));
   btnVisible.addEventListener('click', () => triggerCapture(false));
+  document.getElementById('btn-container').addEventListener('click', () => triggerCapture(true, true));
 });

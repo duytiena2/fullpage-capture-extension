@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnDownloadPdf = document.getElementById('btn-download-pdf');
 
   let currentZoom = 1.0;
-  let originalCanvasData = null;
+  let originalBlob = null;
   let isCropped = false;
   let currentMeta = null;
 
@@ -63,55 +63,54 @@ document.addEventListener('DOMContentLoaded', async () => {
   docTitle.innerText = currentMeta.title || 'Screenshot';
   document.title = `${currentMeta.title || 'Screenshot'} - FullPage Editor`;
 
-  // Load all chunk images
-  const imagePromises = captureData.chunks.map(chunk => {
+  function canvasBlob(canvas, type = 'image/png', quality) {
     return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ img, ...chunk });
-      img.onerror = reject;
-      img.src = chunk.dataUrl;
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Không thể tạo file ảnh.')), type, quality);
     });
-  });
-
-  let loadedChunks;
-  try {
-    loadedChunks = await Promise.all(imagePromises);
-  } catch (err) {
-    loadingSpinner.innerHTML = `<p style="color: #ef4444;">Lỗi ghép nối các lát cắt hình ảnh</p>`;
-    return;
   }
 
-  // Calculate dimensions
-  const firstImg = loadedChunks[0].img;
-  const dpr = currentMeta.dpr || (firstImg.width / currentMeta.viewportWidth) || 1;
-  const scale = firstImg.width / currentMeta.viewportWidth;
+  async function loadChunk(chunk) {
+    const blob = chunk.dataUrl ? await (await fetch(chunk.dataUrl)).blob()
+      : await getCaptureChunk(captureId, chunk.index);
+    return createImageBitmap(blob);
+  }
 
-  const totalCanvasWidth = firstImg.width;
-  const totalCanvasHeight = Math.round(currentMeta.scrollHeight * scale);
-
-  mainCanvas.width = totalCanvasWidth;
-  mainCanvas.height = totalCanvasHeight;
-
-  // Stitch chunks
-  let stitchedBottom = 0;
-  loadedChunks.forEach(chunk => {
-    const destY = Math.round(chunk.y * scale);
-    // The last viewport may overlap the previous one. Keep already captured
-    // pixels (including the first header), and append only the new rows.
-    const sourceY = Math.max(0, stitchedBottom - destY);
-    const height = Math.min(chunk.img.height - sourceY, mainCanvas.height - destY - sourceY);
-    if (height > 0) {
-      ctx.drawImage(chunk.img, 0, sourceY, chunk.img.width, height,
-        0, destY + sourceY, chunk.img.width, height);
-      stitchedBottom = destY + sourceY + height;
+  try {
+    if (!captureData.chunks?.length) throw new Error('Phiên chụp chưa có ảnh.');
+    let scale, stitchedBottom = 0;
+    // Decode and release one frame at a time instead of retaining every bitmap.
+    for (const chunk of captureData.chunks) {
+      const image = await loadChunk(chunk);
+      try {
+        if (!scale) {
+          scale = image.width / currentMeta.viewportWidth;
+          const width = Math.round((currentMeta.captureWidth || currentMeta.viewportWidth) * scale);
+          const height = Math.round(currentMeta.scrollHeight * scale);
+          if (!Number.isFinite(width * height) || width < 1 || height < 1 ||
+              width > 32767 || height > 32767 || width * height > 64 * 1024 * 1024) {
+            throw new Error('Ảnh quá lớn. Hãy chụp vùng nhỏ hơn hoặc giảm zoom trình duyệt.');
+          }
+          mainCanvas.width = width; mainCanvas.height = height;
+        }
+        const clip = chunk.clip || { x: 0, y: 0, width: currentMeta.viewportWidth, height: currentMeta.viewportHeight };
+        const destY = Math.round(chunk.y * scale);
+        const skip = Math.max(0, stitchedBottom - destY);
+        const sx = Math.round(clip.x * scale), sy = Math.round(clip.y * scale) + skip;
+        const width = Math.min(mainCanvas.width, image.width - sx);
+        const height = Math.min(Math.round(clip.height * scale) - skip, mainCanvas.height - destY - skip, image.height - sy);
+        if (height > 0 && width > 0) {
+          ctx.drawImage(image, sx, sy, width, height, 0, destY + skip, width, height);
+          stitchedBottom = destY + skip + height;
+        }
+      } finally { image.close(); }
     }
-  });
-
-  // Save original backup for reset
-  originalCanvasData = document.createElement('canvas');
-  originalCanvasData.width = mainCanvas.width;
-  originalCanvasData.height = mainCanvas.height;
-  originalCanvasData.getContext('2d').drawImage(mainCanvas, 0, 0);
+    originalBlob = await canvasBlob(mainCanvas);
+    captureData = null;
+  } catch (err) {
+    loadingSpinner.textContent = 'Lỗi tải/ghép ảnh: ' + err.message;
+    mainCanvas.width = mainCanvas.height = 0;
+    return;
+  }
 
   loadingSpinner.style.display = 'none';
   updateDimensionsLabel();
@@ -271,18 +270,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     cropState.resizeDir = dir;
     cropState.startX = e.clientX;
     cropState.startY = e.clientY;
+    cropState.startScrollX = workspace.scrollLeft;
+    cropState.startScrollY = workspace.scrollTop;
     cropState.origX = cropState.x;
     cropState.origY = cropState.y;
     cropState.origW = cropState.w;
     cropState.origH = cropState.h;
     e.preventDefault();
     e.stopPropagation();
+    lastPointer = { clientX: e.clientX, clientY: e.clientY };
+    if (!autoScrollFrame) autoScrollFrame = requestAnimationFrame(autoScroll);
   });
 
-  window.addEventListener('mousemove', (e) => {
+  let lastPointer = null, autoScrollFrame = 0;
+  function updateDrag(e) {
     if (!isCroppingActive) return;
-    const dx = e.clientX - cropState.startX;
-    const dy = e.clientY - cropState.startY;
+    const dx = e.clientX - cropState.startX + workspace.scrollLeft - cropState.startScrollX;
+    const dy = e.clientY - cropState.startY + workspace.scrollTop - cropState.startScrollY;
     const maxW = mainCanvas.offsetWidth;
     const maxH = mainCanvas.offsetHeight;
 
@@ -316,11 +320,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       cropState.h = newH;
       updateCropBoxDOM();
     }
+  }
+
+  function autoScroll() {
+    autoScrollFrame = 0;
+    if (!lastPointer || !isCroppingActive || !(cropState.isDragging || cropState.isResizing)) return;
+    const bounds = workspace.getBoundingClientRect();
+    const speed = (value, min, max) => value < min + 40 ? -Math.min(24, (min + 40 - value) / 2)
+      : value > max - 40 ? Math.min(24, (value - max + 40) / 2) : 0;
+    workspace.scrollBy(speed(lastPointer.clientX, bounds.left, bounds.right), speed(lastPointer.clientY, bounds.top, bounds.bottom));
+    updateDrag(lastPointer);
+    autoScrollFrame = requestAnimationFrame(autoScroll);
+  }
+  window.addEventListener('mousemove', e => {
+    lastPointer = { clientX: e.clientX, clientY: e.clientY };
+    updateDrag(lastPointer);
+  });
+  workspace.addEventListener('scroll', () => {
+    if (lastPointer) updateDrag(lastPointer);
   });
 
-  window.addEventListener('mouseup', () => {
+  function stopDrag() {
     cropState.isDragging = false;
     cropState.isResizing = false;
+    cancelAnimationFrame(autoScrollFrame);
+    autoScrollFrame = 0;
+  }
+  window.addEventListener('mouseup', stopDrag);
+  window.addEventListener('blur', stopDrag);
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { stopDrag(); cancelCrop(); }
   });
 
   // Apply Crop
@@ -348,17 +377,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast('Đã cắt ảnh thành công!');
   });
 
-  // Reset Crop to Original
-  btnResetCrop.addEventListener('click', () => {
-    if (!originalCanvasData) return;
-    mainCanvas.width = originalCanvasData.width;
-    mainCanvas.height = originalCanvasData.height;
-    ctx.drawImage(originalCanvasData, 0, 0);
-    isCropped = false;
-    btnResetCrop.style.display = 'none';
-    setZoom(currentZoom);
-    updateDimensionsLabel();
-    showToast('Đã khôi phục ảnh gốc!');
+  // Keep the reset image compressed rather than allocating a second full canvas.
+  btnResetCrop.addEventListener('click', async () => {
+    if (!originalBlob) return;
+    btnResetCrop.disabled = true;
+    let image;
+    try {
+      image = await createImageBitmap(originalBlob);
+      cancelCrop();
+      mainCanvas.width = image.width; mainCanvas.height = image.height;
+      ctx.drawImage(image, 0, 0);
+      isCropped = false;
+      btnResetCrop.style.display = 'none';
+      setZoom(currentZoom);
+      updateDimensionsLabel();
+      showToast('Đã khôi phục ảnh gốc!');
+    } catch (err) { showToast('Lỗi khôi phục: ' + err.message); }
+    finally { image?.close(); btnResetCrop.disabled = false; }
   });
 
   // --- EXPORT & DOWNLOAD ACTIONS ---
@@ -373,71 +408,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  btnDownloadPng.addEventListener('click', () => {
-    mainCanvas.toBlob((blob) => {
-      if (blob) {
-        triggerDownload(blob, 'png');
-        showToast('Đang tải file PNG...');
-      }
-    }, 'image/png');
-  });
-
-  btnDownloadJpg.addEventListener('click', () => {
-    // Create white bg canvas to avoid transparent black artifact in JPG
-    const jpgCanvas = document.createElement('canvas');
-    jpgCanvas.width = mainCanvas.width;
-    jpgCanvas.height = mainCanvas.height;
-    const jCtx = jpgCanvas.getContext('2d');
-    jCtx.fillStyle = '#ffffff';
-    jCtx.fillRect(0, 0, jpgCanvas.width, jpgCanvas.height);
-    jCtx.drawImage(mainCanvas, 0, 0);
-
-    jpgCanvas.toBlob((blob) => {
-      if (blob) {
-        triggerDownload(blob, 'jpg');
-        showToast('Đang tải file JPG...');
-      }
-    }, 'image/jpeg', 0.92);
-  });
-
-  btnCopy.addEventListener('click', async () => {
+  let exporting = false;
+  async function exportAction(action) {
+    if (exporting) return;
+    exporting = true;
+    const buttons = [btnCopy, btnDownloadPng, btnDownloadJpg, btnDownloadPdf, btnApplyCrop, btnResetCrop];
+    buttons.forEach(button => button.disabled = true);
+    try { await action(); }
+    catch (err) { console.error(err); showToast('Không thể xuất ảnh: ' + err.message); }
+    finally { exporting = false; buttons.forEach(button => button.disabled = false); }
+  }
+  btnDownloadPng.addEventListener('click', () => exportAction(async () => {
+    triggerDownload(await canvasBlob(mainCanvas), 'png');
+    showToast('Đang tải file PNG...');
+  }));
+  btnDownloadJpg.addEventListener('click', () => exportAction(async () => {
+    const jpg = document.createElement('canvas');
     try {
-      mainCanvas.toBlob(async (blob) => {
-        if (!blob) throw new Error('Không tạo được blob');
-        await navigator.clipboard.write([
-          new ClipboardItem({ 'image/png': blob })
-        ]);
-        showToast('Đã sao chép ảnh vào Clipboard!');
-      }, 'image/png');
-    } catch (err) {
-      console.error(err);
-      showToast('Lỗi sao chép: ' + err.message);
+      jpg.width = mainCanvas.width; jpg.height = mainCanvas.height;
+      const context = jpg.getContext('2d');
+      context.fillStyle = '#ffffff'; context.fillRect(0, 0, jpg.width, jpg.height);
+      context.drawImage(mainCanvas, 0, 0);
+      triggerDownload(await canvasBlob(jpg, 'image/jpeg', 0.92), 'jpg');
+      showToast('Đang tải file JPG...');
+    } finally { jpg.width = jpg.height = 0; }
+  }));
+  btnCopy.addEventListener('click', () => exportAction(async () => {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      throw new Error('Trình duyệt không hỗ trợ sao chép ảnh. Hãy tải PNG.');
     }
-  });
-
-  // Multi-page or Single-page PDF Export
-  btnDownloadPdf.addEventListener('click', async () => {
-    showToast('Đang xuất bản PDF...');
-    // Use window.print with an image-only print container for standard PDF print-to-PDF,
-    // or create a data iframe
-    const printWindow = window.open('', '_blank');
-    const imgData = mainCanvas.toDataURL('image/png');
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>${safeTitle} - PDF</title>
-        <style>
-          @page { margin: 0; size: auto; }
-          body { margin: 0; padding: 0; background: #fff; text-align: center; }
-          img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
-        </style>
-      </head>
-      <body>
-        <img src="${imgData}" onload="window.print();window.close();" />
-      </body>
-      </html>
-    `);
-    printWindow.document.close();
-  });
+    // Pass the blob promise during the click, preserving user activation.
+    const blob = canvasBlob(mainCanvas);
+    blob.catch(() => {});
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    showToast('Đã sao chép ảnh vào Clipboard!');
+  }));
+  btnDownloadPdf.addEventListener('click', () => exportAction(async () => {
+    showToast('Đang tạo PDF...');
+    const pdf = await createScreenshotPdf(mainCanvas, (page, total) => showToast('PDF: ' + page + '/' + total + ' trang'));
+    triggerDownload(pdf, 'pdf');
+    showToast('Đang tải PDF...');
+  }));
 });
