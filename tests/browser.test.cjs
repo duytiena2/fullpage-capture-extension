@@ -124,15 +124,31 @@ test('visible capture waits for a slow image and keeps the current scroll positi
   assert.deepEqual(await editor.locator('#main-canvas').evaluate(c => [...c.getContext('2d').getImageData(120, 220, 1, 1).data]), [0, 255, 0, 255]);
   await editor.close(); await s.page.close();
 });
-test('Esc, cancel, focus loss and capture errors restore the page and remove temporary frames', async () => {
-  for (const mode of ['escape', 'button', 'failure', 'selection', 'blur']) {
+test('focus changes within a visible source page do not cancel capture', async () => {
+  const s = await captureFixture();
+  await s.page.evaluate(() => window.scrollTo(0, 70));
+  await s.start();
+  await s.page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  const payload = await s.done();
+  assert.ok(payload.chunks.length > 1);
+  assert.equal(s.aborted, false);
+  assert.deepEqual(s.alerts, []);
+  assert.equal(await s.page.evaluate(() => scrollY), 70);
+  await s.page.close();
+});
+
+test('Esc, cancel, hidden source tab and capture errors restore the page and remove temporary frames', async () => {
+  for (const mode of ['escape', 'button', 'failure', 'selection', 'hidden']) {
     const s = await captureFixture();
     await s.page.evaluate(() => window.scrollTo(0, 70));
     if (mode === 'failure') s.fail();
     await s.start({ selectContainer: mode === 'selection' });
     if (mode === 'escape' || mode === 'selection') await s.page.keyboard.press('Escape');
     if (mode === 'button') await s.page.locator('#__fullpage_capture_overlay button').click();
-    if (mode === 'blur') await s.page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    if (mode === 'hidden') await s.page.evaluate(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
     assert.equal(await s.done(), null);
     assert.equal(await s.page.locator('#__fullpage_capture_overlay').count(), 0);
     assert.equal(await s.page.evaluate(() => scrollY), 70);

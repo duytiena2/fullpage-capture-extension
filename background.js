@@ -5,13 +5,12 @@ const inFlight = new Set();
 chrome.tabs.onActivated.addListener(info => {
   for (const shot of inFlight) if (info.windowId === shot.windowId && info.tabId !== shot.tabId) shot.changed = true;
 });
-chrome.windows.onFocusChanged.addListener(windowId => {
-  for (const shot of inFlight) if (windowId !== shot.windowId) shot.changed = true;
-});
 async function assertSource(source) {
-  const [tab, window] = await Promise.all([chrome.tabs.get(source.tabId), chrome.windows.get(source.windowId)]);
-  if (!tab.active || tab.windowId !== source.windowId || !window.focused) {
-    throw new Error('Đã dừng vì bạn chuyển tab hoặc cửa sổ. Hãy chụp lại ở tab nguồn.');
+  // captureVisibleTab targets this window explicitly; OS/popup focus is not
+  // evidence that its active tab changed.
+  const tab = await chrome.tabs.get(source.tabId);
+  if (!tab.active || tab.windowId !== source.windowId) {
+    throw new Error('Đã dừng vì tab nguồn đã đổi hoặc được chuyển sang cửa sổ khác. Hãy chụp lại ở tab nguồn.');
   }
 }
 async function getSession(id, sender) {

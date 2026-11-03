@@ -29,10 +29,8 @@
     cancel.addEventListener('click', () => abort('Đã hủy chụp.'));
     const onKey = e => { if (e.key === 'Escape') { e.preventDefault(); abort('Đã hủy chụp.'); } };
     const onVisibility = () => { if (document.hidden) abort('Đã dừng vì bạn chuyển tab.'); };
-    const onBlur = () => abort('Đã dừng vì cửa sổ nguồn mất tiêu điểm.');
     document.addEventListener('keydown', onKey, true);
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('blur', onBlur);
     function temporary(element, property, value) {
       let saved = changes.get(element);
       if (!saved) changes.set(element, saved = new Map());
@@ -230,7 +228,6 @@
       window.scrollTo({ left: original.x, top: original.y, behavior: 'instant' });
       document.removeEventListener('keydown', onKey, true);
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('blur', onBlur);
       overlay.remove();
       window.__fullPageCaptureRunning = false;
       if (captureId && !finished) await chrome.runtime.sendMessage({ action: 'ABORT_CAPTURE', captureId }).catch(() => {});

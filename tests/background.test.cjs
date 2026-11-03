@@ -6,7 +6,7 @@ const { randomUUID } = require('node:crypto');
 
 function setup() {
   const sessions = new Map(), chunks = new Map(), events = {}, calls = [];
-  const state = { active: 1, focused: true };
+  const state = { active: 1, focused: true, windowId: 5 };
   const sender = { tab: { id: 1, windowId: 5 }, frameId: 0, documentId: 'doc' };
   const context = vm.createContext({ console, fetch, crypto: { randomUUID }, importScripts() {},
     setTimeout: fn => { queueMicrotask(fn); },
@@ -17,7 +17,7 @@ function setup() {
     chrome: {
       tabs: {
         onActivated: { addListener: fn => events.activated = fn },
-        get: async () => ({ active: state.active === 1, windowId: 5 }),
+        get: async () => ({ active: state.active === 1, windowId: state.windowId }),
         captureVisibleTab: async (windowId, options) => { calls.push({ windowId, options }); if (state.during) await state.during(); return 'data:image/png;base64,AA=='; },
         create: async options => { calls.push(options); return { id: 10 }; }
       },
@@ -39,14 +39,32 @@ test('streams frame into storage, returns no image payload and opens editor afte
   await s.send({ action: 'SAVE_AND_OPEN_EDITOR', captureId, payload: { meta: {}, chunks: [{ index: 0, y: 0 }] } });
   assert.ok(s.calls[1].url.endsWith(captureId));
 });
-test('rejects tab/window changes before capture and transient changes during capture', async () => {
+test('rejects source tab changes, moving the source window and transient tab switches', async () => {
   for (const mode of ['tab', 'window', 'transient']) {
     const s = setup(); const { captureId } = await s.send({ action: 'BEGIN_CAPTURE' });
     if (mode === 'tab') s.state.active = 2;
-    if (mode === 'window') s.state.focused = false;
+    if (mode === 'window') s.state.windowId = 6;
     if (mode === 'transient') s.state.during = async () => s.events.activated({ windowId: 5, tabId: 2 });
     await assert.rejects(s.send({ action: 'CAPTURE_VISIBLE', captureId, index: 0 }), /chuyển|đổi/);
     assert.equal(s.chunks.size, 0);
+  }
+});
+
+test('captures the source window despite missing or transient window focus', async () => {
+  for (const mode of ['startup', 'before-frame', 'during-frame']) {
+    const s = setup();
+    const focus = windowId => {
+      s.state.focused = windowId === 5;
+      s.events.focus?.(windowId);
+    };
+    if (mode === 'startup') focus(false);
+    const { captureId } = await s.send({ action: 'BEGIN_CAPTURE' });
+    if (mode === 'before-frame') focus(6);
+    if (mode === 'during-frame') s.state.during = async () => { focus(-1); focus(5); };
+    assert.equal((await s.send({ action: 'CAPTURE_VISIBLE', captureId, index: 0 })).success, true);
+    assert.equal(s.calls[0].windowId, 5);
+    assert.equal(s.chunks.size, 1);
+    assert.equal((await s.send({ action: 'SAVE_AND_OPEN_EDITOR', captureId, payload: { meta: {}, chunks: [{ index: 0 }] } })).success, true);
   }
 });
 test('abort removes incomplete frames; other documents cannot reuse a session', async () => {

@@ -58,7 +58,7 @@ fullpage-capture-extension/
    - **Chụp toàn bộ trang web**: Tiện ích sẽ tự động cuộn mượt mà từ đầu trang xuống chân trang, hiển thị tiến trình % trực quan, sau đó tự động ghép các khung hình lại thành 1 ảnh duy nhất và mở tab Editor.
    - **Chụp vùng đang xem**: Chụp nhanh ngay lập tức phần trang đang hiển thị.
    - **Chụp vùng cuộn trong trang**: Di chuột để tô sáng và bấm vào bảng/panel có thanh cuộn. Đưa toàn bộ panel vào màn hình trước khi chọn. Tiện ích chụp nội dung bên trong và khôi phục vị trí cuộn sau khi xong.
-   - Bấm **Hủy** hoặc **Esc** để dừng. Giữ tab và cửa sổ nguồn ở phía trước; chuyển tab/cửa sổ hoặc đổi kích thước màn hình sẽ dừng phiên chụp.
+   - Bấm **Hủy** hoặc **Esc** để dừng. Giữ tab nguồn đang được chọn trong cửa sổ của nó; đổi tab, ẩn trang, chuyển tab nguồn sang cửa sổ khác hoặc đổi kích thước màn hình sẽ dừng phiên chụp. Mất tiêu điểm do popup hay thao tác với cửa sổ khác không tự hủy phiên chụp.
 4. Tại tab **Editor**:
    - **Zoom**: Dùng nút `+`, `-`, `Vừa màn hình` hoặc giữ `Ctrl + Lăn chuột`.
    - **Cắt ảnh (Crop)**: Bấm nút **Cắt ảnh (Crop)** -> Kéo thả khung chọn hoặc rê chuột vào 8 nút neo ở các cạnh/góc để điều chỉnh kích thước chính xác -> Bấm **Áp dụng cắt**.
