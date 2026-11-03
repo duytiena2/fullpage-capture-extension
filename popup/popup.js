@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('extension-version').textContent =
+    'Phiên bản ' + chrome.runtime.getManifest().version + ' • Hoàn toàn miễn phí';
   const btnFullPage = document.getElementById('btn-fullpage');
   const btnVisible = document.getElementById('btn-visible');
 
